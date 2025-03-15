@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["fastalgebra"]
+
+ext-modules = [{name = "fastalgebra.expr",sources = ["fastalgebra/expr.c", "fastalgebra/ll.c", "fastalgebra/stack.c"], extra-compile-args = ["-Wall","-pedantic"]}]
+
+[project]
+name = "fastalgebra"
+version = "0.0.1"
+description = "A fast algebra library"
+authors = [{name="Adam Jenca", email="jenca.adam@gmail.com"}]
+maintainers = [{name="Adam Jenca", email="jenca.adam@gmail.com"}]
+classifiers = [
+	"Development Status :: 3 - Alpha",
+	"Programming Language :: C",
+	"Programming Language :: Python :: 3 :: Only",
+	"Topic :: Software Development :: Libraries :: Python Modules",
+	"Intended Audience :: Developers"
+	]
+
