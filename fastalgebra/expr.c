@@ -285,8 +285,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
     return -1;
   ll_iter(toklist, (IT_ITER_FUNC)print_token);
   stack *opstack = stack_new(NULL);
-  stack *valstack = stack_new(
-      NULL); // we push everything with freeme=0, so this is just a failsafe
+  stack *valstack = stack_new((IT_FREE_FUNC)expr_free);
   expr *last = NULL;
   ll_item *it = toklist->root; // this eventually gets consumed
   while (it) {
@@ -386,27 +385,29 @@ end:
       expr_free(op, 1);
     }
   }
-  if (valstack->size > 1) {
-    PyErr_SetString(PyExc_ValueError, "excess items in expression");
-    goto error;
-  }
-  if (valstack->top && valstack->top->contents) {
-    *expression = *(expr *)valstack->top->contents;
-  } else {
-    PyErr_SetString(PyExc_ValueError, "nothing in value stack");
-    goto error;
-  }
   printf("GLOBAL STACK CONTENTS:\n");
   stack_iter(globstack, (IT_ITER_FUNC)print_token);
   printf("OPERATION STACK CONTENTS:\n");
   stack_iter(opstack, (IT_ITER_FUNC)print_expr);
   printf("VALUE STACK CONTENTS:\n");
   stack_iter(valstack, (IT_ITER_FUNC)print_expr);
+
+  if (valstack->size > 1) {
+    PyErr_SetString(PyExc_ValueError, "excess items in expression");
+    goto error;
+  }
+  if (valstack->top && valstack->top->contents) {
+    *expression = *(expr *)valstack->top->contents;
+    free(valstack->top->contents);
+  } else {
+    PyErr_SetString(PyExc_ValueError, "nothing in value stack");
+    goto error;
+  }
   stack_free(valstack);
   stack_free(opstack);
   return 0;
 error:
-  stack_free(valstack);
+  stack_free_all(valstack);
   stack_free(opstack);
 
   return -1;

@@ -27,6 +27,17 @@ void stack_free(stack *st) {
   stack_clear(st);
   free(st);
 }
+void stack_free_all(stack *st) { // force freeing even if freeme is not set
+  stack_item *it = st->top;
+  while (it) {
+    stack_item *nit = it->prev;
+    if (st->it_free) {
+      st->it_free(it->contents);
+    }
+    it = nit;
+  }
+  free(st);
+}
 void *stack_peek(stack *st, int index) {
   stack_item *it = st->top;
   while (it && index > 0) {

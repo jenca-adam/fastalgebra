@@ -19,6 +19,7 @@ typedef struct stack {
 stack *stack_new(IT_FREE_FUNC it_free);
 void stack_clear(stack *st);
 void stack_free(stack *st);
+void stack_free_all(stack *st);
 void *stack_peek(stack *st, int index);
 void *stack_pop(stack *st, int index);
 void stack_iter(stack *st, IT_ITER_FUNC iter_func);
