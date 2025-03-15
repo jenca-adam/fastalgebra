@@ -50,8 +50,8 @@ void *stack_pop(stack *st, int index) {
     st->size--;
     void *contents = it->contents;
     stack_item *prev = it->prev;
-    if(prev){
-    	prev->next = it->next;
+    if (prev) {
+      prev->next = it->next;
     }
     if (it->next) {
       it->next->prev = prev;

@@ -7,9 +7,9 @@
 typedef enum {
   CONST = 0,     // constants
   ADD = 1,       // addition operation
-  MUL = 2,      // multiplication
+  MUL = 2,       // multiplication
   DIV = 3,       // division
-  POW = 4,	 // powet
+  POW = 4,       // powet
   VAR_COEFF = 5, // variable with a coefficient
   NONE = -1,     // uninitialised/invalid
 
@@ -48,33 +48,46 @@ typedef struct Expression {
   PyObject_HEAD expr expression;
 } Expression;
 
-int expr_type_priority(expr_type et){
-    if (et==ADD){
-    	return 1;
-    }
-    if (et==MUL||et==DIV){
-    	return 2;
-    }
-    if (et==POW){
-	return 3;
-    }
-    return -1;
+int expr_type_priority(expr_type et) {
+  if (et == ADD) {
+    return 1;
+  }
+  if (et == MUL || et == DIV) {
+    return 2;
+  }
+  if (et == POW) {
+    return 3;
+  }
+  return -1;
 }
-expr_type op_type(token_type op){
-   if (op==OP_ADD||op==OP_SUB){
-    	return ADD;
+expr_type op_type(token_type op) {
+  if (op == OP_ADD || op == OP_SUB) {
+    return ADD;
+  }
+  if (op == OP_MUL) {
+    return MUL;
+  }
+  if (op == OP_DIV) {
+    return DIV;
+  }
+  if (op == OP_POW) {
+    return POW;
+  }
+  return NONE;
+}
+signed char get_sign(stack *globstack) {
+  stack_item *it = globstack->top->prev;
+  signed char sign = 1;
+  while (it) {
+    token_type type = ((parser_token *)(it->contents))->type;
+    if (type == OP_SUB) {
+      sign = -sign;
+    } else if (type != OP_ADD) {
+      break;
     }
-    if (op==OP_MUL){
-    	return MUL;
-    }
-    if (op==OP_DIV){
-	return DIV;
-    }
-    if (op==OP_POW){
-	return POW;
-    }
-    return NONE;
-
+    it = it->prev;
+  }
+  return sign;
 }
 int alpha_scan(const char *str, char *target, int limit) {
   if (!str || !target || limit <= 0)
@@ -112,33 +125,35 @@ void print_token(parser_token *token) {
   printf("Value: %lf\n", token->value);
 }
 
-void _print_expr(expr *expr, int indent){
-  if(!expr){
-     printf("%*sNULL expression\n",indent, "");
-     return;
+void _print_expr(expr *expr, int indent) {
+  if (!expr) {
+    printf("%*sNULL expression\n", indent, "");
+    printf("%*s---------------\n", indent, "");
+    return;
   }
-  printf("%*sType: %d\n",indent, "", expr->type);
-  if(expr->varname){
-  	printf("%*sVariable name: %c\n",indent, "", expr->varname);
+  printf("%*sType: %d\n", indent, "", expr->type);
+  printf("%*sSign: %d\n", indent, "", expr->sign);
+  if (expr->varname) {
+    printf("%*sVariable name: %c\n", indent, "", expr->varname);
   }
-  if(expr->num_arguments>0){
-     printf("%*sArguments: ", indent, "");
-     for(int i=0; i<expr->num_arguments; i++){
-     	printf(" %lf", expr->arguments[i]);
-     }
-     printf("\n");
+  if (expr->num_arguments > 0) {
+    printf("%*sArguments: ", indent, "");
+    for (int i = 0; i < expr->num_arguments; i++) {
+      printf(" %lf", expr->arguments[i]);
+    }
+    printf("\n");
   }
-  if(expr->num_children>0){
-     printf("%*sChildren:\n", indent, "");
-     for(int i=0; i<expr->num_children; i++){
-     	_print_expr(expr->children[i], indent+4);
-     }
+  if (expr->num_children > 0) {
+    printf("%*sChildren:\n", indent, "");
+
+    printf("%*s---------------\n", indent + 4, "");
+    for (int i = 0; i < expr->num_children; i++) {
+      _print_expr(expr->children[i], indent + 4);
+    }
   }
   printf("%*s---------------\n", indent, "");
 }
-void print_expr(expr *expr){
-  _print_expr(expr, 0);
-}
+void print_expr(expr *expr) { _print_expr(expr, 0); }
 linked_list *expr_tokenize(char *str) {
   int bytes_read;
   char *origin = str;
@@ -244,13 +259,11 @@ void expr_free(expr *expression, int free_root) {
     expr_free(expression->children[i], 1);
   }
   free(expression->children);
-  if(free_root){
-  	free(expression);
+  if (free_root) {
+    free(expression);
   }
 }
-void expr_free_root(expr *expression){
-	expr_free(expression, 1);
-}
+void expr_free_root(expr *expression) { expr_free(expression, 1); }
 expr *expr_new(int num_children, int num_arguments, expr_type type,
                signed char sign, char varname) {
   expr *expression = malloc(sizeof(expr));
@@ -271,6 +284,7 @@ int expr_parseinto(char *str, expr *expression) {
   stack *globstack = stack_new(NULL);
   stack *opstack = stack_new((IT_FREE_FUNC)expr_free_root);
   stack *valstack = stack_new((IT_FREE_FUNC)expr_free_root);
+  expr *last = NULL;
   ll_item *it = toklist->root;
   while (it) {
     expr *nexpr;
@@ -280,11 +294,30 @@ int expr_parseinto(char *str, expr *expression) {
     case NUMBER:
       nexpr = expr_new(0, 1, CONST, 1, '\0');
       nexpr->arguments[0] = tok->value;
+      nexpr->sign = get_sign(globstack);
       stack_push(valstack, nexpr, 0);
       break;
     case VARIABLE:
       nexpr = expr_new(0, 0, VAR_COEFF, 1, tok->spelling[0]);
-      stack_push(valstack, nexpr, 0);
+      // handle implicit multiplication
+      if (globstack->top->prev &&
+          ((parser_token *)(globstack->top->prev->contents))->type ==
+              VARIABLE &&
+          valstack->top) { // if two variables really followed each other,
+                           // nothing's going to modify the stack, so the last
+                           // value stays on top
+        expr *last = (expr *)valstack->top->contents;
+        expr *implicit_mul = expr_new(2, 0, MUL, last->sign, '\0'); // copy sign
+        last->sign = 1; // we copied the sign, so change this to positive so we
+                        // don't cancel it out
+        implicit_mul->children[0] = last;
+        implicit_mul->children[1] = nexpr;
+        valstack->top->contents = implicit_mul; // no need to pop if we're just
+                                                // going to push back again
+      } else {
+        nexpr->sign = get_sign(globstack);
+        stack_push(valstack, nexpr, 0);
+      }
       break;
     case PAREN_R:
       goto end;
@@ -294,16 +327,26 @@ int expr_parseinto(char *str, expr *expression) {
       break;
     default:
       expr_type type = op_type(tok->type);
-      if(type==NONE){
-      	break;
+      if (type == NONE) {
+        break;
       }
       int new_priority = expr_type_priority(type);
-      while(opstack->top&&expr_type_priority(((expr*)(opstack->top->contents))->type)>=new_priority){
+      // while the next operation has lower priority than the previous
+      while (opstack->top &&
+             expr_type_priority(((expr *)(opstack->top->contents))->type) >=
+                 new_priority) {
 
-	      expr *op = stack_pop(opstack, 0);
-	      op->children[1] = stack_pop(valstack, 0);
-	      op->children[0] = stack_pop(valstack, 0);
-	      stack_push(valstack, op, 0);
+        expr *op = stack_pop(opstack, 0);
+        if (valstack->size >= 2) {
+          op->children[1] = stack_pop(valstack, 0);
+          op->children[0] = stack_pop(valstack, 0);
+          stack_push(valstack, op, 0);
+        } else { // unary minus already gets handled by get_sign, so just
+                 // discard the op if there's not enough args
+          expr_free(
+              op,
+              1); // don't exit the loop here, we want to free unused unary ops
+        }
       }
       nexpr = expr_new(2, 0, type, 1, '\0');
       stack_push(opstack, nexpr, 0);
@@ -312,20 +355,21 @@ int expr_parseinto(char *str, expr *expression) {
     it = it->next;
   };
 end:
-  while(opstack->top){
-      expr *op = stack_pop(opstack, 0);
+  while (opstack->top) {
+    expr *op = stack_pop(opstack, 0);
+    if (valstack->size >= 2) {
       op->children[1] = stack_pop(valstack, 0);
       op->children[0] = stack_pop(valstack, 0);
       stack_push(valstack, op, 0);
-
-
+    } else {
+      expr_free(op, 1);
+    }
   }
-  if (valstack->top->contents){
- 	 *expression = *(expr*)valstack->top->contents;
-  }
-  else{
-	  PyErr_SetString(PyExc_ValueError, "nothing in value stack");
-	  goto error;
+  if (valstack->top->contents) {
+    *expression = *(expr *)valstack->top->contents;
+  } else {
+    PyErr_SetString(PyExc_ValueError, "nothing in value stack");
+    goto error;
   }
   printf("GLOBAL STACK CONTENTS:\n");
   stack_iter(globstack, (IT_ITER_FUNC)print_token);
@@ -349,7 +393,7 @@ error:
 
 static void Expression_dealloc(Expression *self) {
   if (self) {
-    expr_free(&self->expression,0);
+    expr_free(&self->expression, 0);
     Py_TYPE(self)->tp_free((PyObject *)self);
   }
 }
