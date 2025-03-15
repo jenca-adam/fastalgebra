@@ -283,6 +283,7 @@ void expr_free(expr *expression, int free_root) {
     free(expression);
   }
 }
+
 void expr_free_root(expr *expression) { expr_free(expression, 1); }
 expr *expr_new(int num_children, int num_arguments, expr_type type,
                signed char sign, char varname) {
@@ -295,6 +296,30 @@ expr *expr_new(int num_children, int num_arguments, expr_type type,
   expression->sign = sign;
   expression->varname = varname;
   return expression;
+}
+void _impl_mult(stack *globstack, stack *valstack, expr *nexpr){
+	if (globstack->top->prev &&
+          (((parser_token *)(globstack->top->prev->contents))->type ==
+               VARIABLE ||
+           ((parser_token *)(globstack->top->prev->contents))->type == CONST ||
+           ((parser_token *)(globstack->top->prev->contents))->type ==
+               PAREN_R) && // man we could really use some macros
+          valstack->top) { // if the last item is not an operation,
+                           // nothing's going to modify the stack, so the last
+                           // value stays on top
+        expr *last = (expr *)valstack->top->contents;
+        expr *implicit_mul = expr_new(2, 0, MUL, last->sign, '\0'); // copy sign
+        last->sign = 1; // we copied the sign, so change this to positive so we
+                        // don't cancel it out
+        implicit_mul->children[0] = last;
+        implicit_mul->children[1] = nexpr;
+        valstack->top->contents = implicit_mul; // no need to pop if we're just
+                                                // going to push back again
+      } else {
+        nexpr->sign *= get_sign(globstack);
+        stack_push(valstack, nexpr, 0);
+      }
+
 }
 int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
   if (!toklist)
@@ -317,29 +342,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       break;
     case VARIABLE:
       nexpr = expr_new(0, 0, VAR_COEFF, 1, tok->spelling[0]);
-      // handle implicit multiplication
-impl_mult:
-      if (globstack->top->prev &&
-          (((parser_token *)(globstack->top->prev->contents))->type ==
-               VARIABLE ||
-           ((parser_token *)(globstack->top->prev->contents))->type == CONST ||
-           ((parser_token *)(globstack->top->prev->contents))->type ==
-               PAREN_R) && // man we could really use some macros
-          valstack->top) { // if the last item is not an operation,
-                           // nothing's going to modify the stack, so the last
-                           // value stays on top
-        expr *last = (expr *)valstack->top->contents;
-        expr *implicit_mul = expr_new(2, 0, MUL, last->sign, '\0'); // copy sign
-        last->sign = 1; // we copied the sign, so change this to positive so we
-                        // don't cancel it out
-        implicit_mul->children[0] = last;
-        implicit_mul->children[1] = nexpr;
-        valstack->top->contents = implicit_mul; // no need to pop if we're just
-                                                // going to push back again
-      } else {
-        nexpr->sign *= get_sign(globstack);
-        stack_push(valstack, nexpr, 0);
-      }
+      _impl_mult(globstack, valstack, nexpr);
       break;
     case PAREN_R:
       toklist->root = it;
@@ -347,16 +350,21 @@ impl_mult:
       break;
     case PAREN_L:
       nexpr = malloc(sizeof(expr));
-      signed char sign =
-          get_sign(globstack);  // get sign now since we modify the global stack
+      stack_item *old_top = globstack->top;
       toklist->root = it->next; // start evaluating from the next token
+      
       int ok = expr_parseinto(toklist, nexpr, globstack);
+      stack_item *new_top = globstack->top;
+      globstack->top = old_top;
+
       it = toklist->root;
       if (ok == -1) {
         free(nexpr);
         goto error;
       }
-      goto impl_mult;
+      _impl_mult(globstack, valstack, nexpr);
+      globstack->top=new_top;
+      break;
     default:; // -pedantic go brrr
       expr_type type = op_type(tok->type);
       if (type == NONE) {
