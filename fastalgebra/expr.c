@@ -190,15 +190,16 @@ linked_list *expr_tokenize(char *str) {
       case '(':
         stack_push(paren_stack, str, 0);
 
-	toktype = PAREN_L;
+        toktype = PAREN_L;
         spelling = strdup("(");
         str++;
         break;
       case ')':
-	if(!stack_pop(paren_stack, 0)){
-		PyErr_Format(PyExc_ValueError, "Extra ')' in expression at index %d", (str-origin));
-		goto error;
-	}
+        if (!stack_pop(paren_stack, 0)) {
+          PyErr_Format(PyExc_ValueError, "Extra ')' in expression at index %d",
+                       (str - origin));
+          goto error;
+        }
         toktype = PAREN_R;
         spelling = strdup(")");
         str++;
@@ -233,7 +234,7 @@ linked_list *expr_tokenize(char *str) {
           PyErr_Format(PyExc_ValueError,
                        "Invalid character in expression at index %d: '%c'",
                        (str - origin), *str);
-	  goto error;
+          goto error;
         }
         char varname;
         if (sscanf(str, "%c%n", &varname, &bytes_read)) {
@@ -255,9 +256,10 @@ linked_list *expr_tokenize(char *str) {
       }
     }
   }
-  if(paren_stack->top){
-     PyErr_Format(PyExc_ValueError, "Unenclosed '(' in expression at index %d", (paren_stack->top->contents-(void*)origin));
-     goto error;
+  if (paren_stack->top) {
+    PyErr_Format(PyExc_ValueError, "Unenclosed '(' in expression at index %d",
+                 (paren_stack->top->contents - (void *)origin));
+    goto error;
   }
 
   stack_free(paren_stack);
@@ -297,29 +299,27 @@ expr *expr_new(int num_children, int num_arguments, expr_type type,
   expression->varname = varname;
   return expression;
 }
-void _impl_mult(stack *globstack, stack *valstack, expr *nexpr){
-	if (globstack->top->prev &&
-          (((parser_token *)(globstack->top->prev->contents))->type ==
-               VARIABLE ||
-           ((parser_token *)(globstack->top->prev->contents))->type == CONST ||
-           ((parser_token *)(globstack->top->prev->contents))->type ==
-               PAREN_R) && // man we could really use some macros
-          valstack->top) { // if the last item is not an operation,
-                           // nothing's going to modify the stack, so the last
-                           // value stays on top
-        expr *last = (expr *)valstack->top->contents;
-        expr *implicit_mul = expr_new(2, 0, MUL, last->sign, '\0'); // copy sign
-        last->sign = 1; // we copied the sign, so change this to positive so we
-                        // don't cancel it out
-        implicit_mul->children[0] = last;
-        implicit_mul->children[1] = nexpr;
-        valstack->top->contents = implicit_mul; // no need to pop if we're just
-                                                // going to push back again
-      } else {
-        nexpr->sign *= get_sign(globstack);
-        stack_push(valstack, nexpr, 0);
-      }
-
+void _impl_mult(stack *globstack, stack *valstack, expr *nexpr) {
+  if (globstack->top->prev &&
+      (((parser_token *)(globstack->top->prev->contents))->type == VARIABLE ||
+       ((parser_token *)(globstack->top->prev->contents))->type == CONST ||
+       ((parser_token *)(globstack->top->prev->contents))->type ==
+           PAREN_R) && // man we could really use some macros
+      valstack->top) { // if the last item is not an operation,
+                       // nothing's going to modify the stack, so the last
+                       // value stays on top
+    expr *last = (expr *)valstack->top->contents;
+    expr *implicit_mul = expr_new(2, 0, MUL, last->sign, '\0'); // copy sign
+    last->sign = 1; // we copied the sign, so change this to positive so we
+                    // don't cancel it out
+    implicit_mul->children[0] = last;
+    implicit_mul->children[1] = nexpr;
+    valstack->top->contents = implicit_mul; // no need to pop if we're just
+                                            // going to push back again
+  } else {
+    nexpr->sign *= get_sign(globstack);
+    stack_push(valstack, nexpr, 0);
+  }
 }
 int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
   if (!toklist)
@@ -352,7 +352,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       nexpr = malloc(sizeof(expr));
       stack_item *old_top = globstack->top;
       toklist->root = it->next; // start evaluating from the next token
-      
+
       int ok = expr_parseinto(toklist, nexpr, globstack);
       stack_item *new_top = globstack->top;
       globstack->top = old_top;
@@ -363,7 +363,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
         goto error;
       }
       _impl_mult(globstack, valstack, nexpr);
-      globstack->top=new_top;
+      globstack->top = new_top;
       break;
     default:; // -pedantic go brrr
       expr_type type = op_type(tok->type);
@@ -392,8 +392,8 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       stack_push(opstack, nexpr, 0);
       break;
     }
-    if(it){
-    	it = it->next;
+    if (it) {
+      it = it->next;
     }
   };
 end:
