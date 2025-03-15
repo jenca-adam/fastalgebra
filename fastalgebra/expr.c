@@ -301,9 +301,11 @@ int expr_parseinto(char *str, expr *expression) {
       nexpr = expr_new(0, 0, VAR_COEFF, 1, tok->spelling[0]);
       // handle implicit multiplication
       if (globstack->top->prev &&
-          ((parser_token *)(globstack->top->prev->contents))->type ==
-              VARIABLE &&
-          valstack->top) { // if two variables really followed each other,
+          (((parser_token *)(globstack->top->prev->contents))->type ==
+               VARIABLE ||
+           ((parser_token *)(globstack->top->prev->contents))->type ==
+               CONST) &&   // man we could really use some macros
+          valstack->top) { // if the last item is not an operation,
                            // nothing's going to modify the stack, so the last
                            // value stays on top
         expr *last = (expr *)valstack->top->contents;
@@ -325,7 +327,7 @@ int expr_parseinto(char *str, expr *expression) {
     case PAREN_L:
       // new expression
       break;
-    default:
+    default:; // -pedantic go brrr
       expr_type type = op_type(tok->type);
       if (type == NONE) {
         break;
@@ -365,7 +367,11 @@ end:
       expr_free(op, 1);
     }
   }
-  if (valstack->top->contents) {
+  if (valstack->size > 1) {
+    PyErr_SetString(PyExc_ValueError, "excess items in expression");
+    goto error;
+  }
+  if (valstack->top && valstack->top->contents) {
     *expression = *(expr *)valstack->top->contents;
   } else {
     PyErr_SetString(PyExc_ValueError, "nothing in value stack");
@@ -434,7 +440,6 @@ static struct PyMemberDef Expression_members[] = {
     {"sign", Py_T_BYTE,
      offsetof(Expression, expression) + offsetof(expr, sign)},
     {"varname", Py_T_CHAR,
-
      offsetof(Expression, expression) + offsetof(expr, varname)},
     {NULL}};
 static struct PyMethodDef Expression_methods[] = {{NULL, NULL, 0, NULL}};
