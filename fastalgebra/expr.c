@@ -160,6 +160,7 @@ void _print_expr(expr *expr, int indent) {
 void print_expr(expr *expr) { _print_expr(expr, 0); }
 linked_list *expr_tokenize(char *str) {
   int bytes_read;
+  stack *paren_stack = stack_new(NULL);
   char *origin = str;
   linked_list *tokens = ll_new((IT_FREE_FUNC)free_token);
   while (*str) { // while not at end of string
@@ -187,11 +188,17 @@ linked_list *expr_tokenize(char *str) {
       char *spelling = NULL;
       switch (*str) {
       case '(':
-        toktype = PAREN_L;
+        stack_push(paren_stack, str, 0);
+
+	toktype = PAREN_L;
         spelling = strdup("(");
         str++;
         break;
       case ')':
+	if(!stack_pop(paren_stack, 0)){
+		PyErr_Format(PyExc_ValueError, "Extra ')' in expression at index %d", (str-origin));
+		goto error;
+	}
         toktype = PAREN_R;
         spelling = strdup(")");
         str++;
@@ -223,11 +230,10 @@ linked_list *expr_tokenize(char *str) {
         break;
       default:
         if (!isalpha((unsigned char)*str)) {
-          ll_free(tokens);
           PyErr_Format(PyExc_ValueError,
                        "Invalid character in expression at index %d: '%c'",
                        (str - origin), *str);
-          return NULL;
+	  goto error;
         }
         char varname;
         if (sscanf(str, "%c%n", &varname, &bytes_read)) {
@@ -249,7 +255,17 @@ linked_list *expr_tokenize(char *str) {
       }
     }
   }
+  if(paren_stack->top){
+     PyErr_Format(PyExc_ValueError, "Unenclosed '(' in expression at index %d", (paren_stack->top->contents-(void*)origin));
+     goto error;
+  }
+
+  stack_free(paren_stack);
   return tokens;
+error:
+  ll_free(tokens);
+  stack_free(paren_stack);
+  return NULL;
 }
 
 void expr_free(expr *expression, int free_root) {
@@ -302,6 +318,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
     case VARIABLE:
       nexpr = expr_new(0, 0, VAR_COEFF, 1, tok->spelling[0]);
       // handle implicit multiplication
+impl_mult:
       if (globstack->top->prev &&
           (((parser_token *)(globstack->top->prev->contents))->type ==
                VARIABLE ||
@@ -320,7 +337,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
         valstack->top->contents = implicit_mul; // no need to pop if we're just
                                                 // going to push back again
       } else {
-        nexpr->sign = get_sign(globstack);
+        nexpr->sign *= get_sign(globstack);
         stack_push(valstack, nexpr, 0);
       }
       break;
@@ -339,12 +356,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
         free(nexpr);
         goto error;
       }
-      nexpr->sign *= sign; // trick
-      stack_push(valstack, nexpr, 0);
-      if (!it) {
-        goto end;
-      }
-      break;
+      goto impl_mult;
     default:; // -pedantic go brrr
       expr_type type = op_type(tok->type);
       if (type == NONE) {
@@ -372,7 +384,9 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       stack_push(opstack, nexpr, 0);
       break;
     }
-    it = it->next;
+    if(it){
+    	it = it->next;
+    }
   };
 end:
   while (opstack->top) {
