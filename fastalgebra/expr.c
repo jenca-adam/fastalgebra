@@ -4,6 +4,7 @@
 #include <Python.h>
 #include <stddef.h>
 #include <stdio.h>
+/* these should really be in a header file but who cares */
 typedef enum {
   CONST = 0,     // constants
   ADD = 1,       // addition operation
@@ -76,6 +77,9 @@ expr_type op_type(token_type op) {
   return NONE;
 }
 signed char get_sign(stack *globstack) {
+  if (!globstack->top) {
+    return 1;
+  }
   stack_item *it = globstack->top->prev;
   signed char sign = 1;
   while (it) {
@@ -276,16 +280,15 @@ expr *expr_new(int num_children, int num_arguments, expr_type type,
   expression->varname = varname;
   return expression;
 }
-int expr_parseinto(char *str, expr *expression) {
-  linked_list *toklist = expr_tokenize(str);
+int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
   if (!toklist)
     return -1;
   ll_iter(toklist, (IT_ITER_FUNC)print_token);
-  stack *globstack = stack_new(NULL);
-  stack *opstack = stack_new((IT_FREE_FUNC)expr_free_root);
-  stack *valstack = stack_new((IT_FREE_FUNC)expr_free_root);
+  stack *opstack = stack_new(NULL);
+  stack *valstack = stack_new(
+      NULL); // we push everything with freeme=0, so this is just a failsafe
   expr *last = NULL;
-  ll_item *it = toklist->root;
+  ll_item *it = toklist->root; // this eventually gets consumed
   while (it) {
     expr *nexpr;
     stack_push(globstack, it->contents, 0);
@@ -303,8 +306,9 @@ int expr_parseinto(char *str, expr *expression) {
       if (globstack->top->prev &&
           (((parser_token *)(globstack->top->prev->contents))->type ==
                VARIABLE ||
+           ((parser_token *)(globstack->top->prev->contents))->type == CONST ||
            ((parser_token *)(globstack->top->prev->contents))->type ==
-               CONST) &&   // man we could really use some macros
+               PAREN_R) && // man we could really use some macros
           valstack->top) { // if the last item is not an operation,
                            // nothing's going to modify the stack, so the last
                            // value stays on top
@@ -322,10 +326,25 @@ int expr_parseinto(char *str, expr *expression) {
       }
       break;
     case PAREN_R:
+      toklist->root = it;
       goto end;
       break;
     case PAREN_L:
-      // new expression
+      nexpr = malloc(sizeof(expr));
+      signed char sign =
+          get_sign(globstack);  // get sign now since we modify the global stack
+      toklist->root = it->next; // start evaluating from the next token
+      int ok = expr_parseinto(toklist, nexpr, globstack);
+      it = toklist->root;
+      if (ok == -1) {
+        free(nexpr);
+        goto error;
+      }
+      nexpr->sign *= sign; // trick
+      stack_push(valstack, nexpr, 0);
+      if (!it) {
+        goto end;
+      }
       break;
     default:; // -pedantic go brrr
       expr_type type = op_type(tok->type);
@@ -383,14 +402,10 @@ end:
   stack_iter(opstack, (IT_ITER_FUNC)print_expr);
   printf("VALUE STACK CONTENTS:\n");
   stack_iter(valstack, (IT_ITER_FUNC)print_expr);
-  ll_free(toklist);
-  stack_free(globstack);
   stack_free(valstack);
   stack_free(opstack);
   return 0;
 error:
-  ll_free(toklist);
-  stack_free(globstack);
   stack_free(valstack);
   stack_free(opstack);
 
@@ -425,9 +440,18 @@ static int Expression_init(Expression *self, PyObject *args, PyObject *kwds) {
   if (!PyArg_ParseTuple(args, "s", &str)) {
     return -1;
   }
-  if (expr_parseinto(str, &self->expression) == -1) {
+  linked_list *toklist = expr_tokenize(str);
+  if (!toklist) {
     return -1;
   }
+  stack *globstack = stack_new(NULL);
+  if (expr_parseinto(toklist, &self->expression, globstack) == -1) {
+    return -1;
+  }
+  stack_free(globstack);
+  ll_free(toklist); // we created it, we free it.
+                    // even if the root gets shifted this is ok, since ll_free
+                    // frees from the top
 }
 
 static struct PyMemberDef Expression_members[] = {
