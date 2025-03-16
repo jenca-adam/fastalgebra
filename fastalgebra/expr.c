@@ -213,7 +213,7 @@ PyObject *expr_stringify(expr *xp, int add_sign) {
   case CONST:
     if (xp->num_arguments > 0) {
       char buffer[512]; // should be enough even for the largest doubles
-      sprintf(buffer, "%lf", xp->arguments[0]);
+      sprintf(buffer, "%lg", xp->arguments[0]);
       partial_string = PyUnicode_FromString(buffer);
     } else {
       partial_string = PyUnicode_New(0, 255);
@@ -270,7 +270,7 @@ linked_list *expr_tokenize(char *str) {
       break;
     } else if (isdigit(*str) || *str == '.') { // omit zero ok
       double value;
-      if (sscanf(str, "%lf%n", &value, &bytes_read)) {
+      if (sscanf(str, "%lg%n", &value, &bytes_read)) {
         parser_token *ntok = malloc(sizeof(parser_token));
         ntok->type = NUMBER;
         ntok->spelling = malloc(sizeof(char) * bytes_read + 1); // null
