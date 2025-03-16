@@ -44,6 +44,7 @@ typedef struct expr {
   signed char sign; // -1: negative, 1: positive, 0: zero
   double *arguments;
   char varname;
+  int depth;
 } expr;
 
 typedef struct Expression {
@@ -265,7 +266,6 @@ linked_list *expr_tokenize(char *str) {
     while (isspace((unsigned char)*str))
       str++;
 
-    printf("CHAR: %c\n", *str);
     if (*str == '\0') {
       break;
     } else if (isdigit(*str) || *str == '.') { // omit zero ok
@@ -344,7 +344,7 @@ linked_list *expr_tokenize(char *str) {
         }
         break;
       }
-      printf("TOKTYPE %d\n", toktype);
+      // printf("TOKTYPE %d\n", toktype);
       if (toktype != INVALID) {
         parser_token *ntok = malloc(sizeof(parser_token));
         ntok->type = toktype;
@@ -396,9 +396,10 @@ expr *expr_new(int num_children, int num_arguments, expr_type type,
   expression->type = type;
   expression->sign = sign;
   expression->varname = varname;
+  expression->depth = num_children > 0;
   return expression;
 }
-void _impl_mult(stack *globstack, stack *valstack, expr *nexpr) {
+int _impl_mult(stack *globstack, stack *valstack, expr *nexpr, int max_depth) {
   if (globstack->top->prev &&
       (((parser_token *)(globstack->top->prev->contents))->type == VARIABLE ||
        ((parser_token *)(globstack->top->prev->contents))->type == CONST ||
@@ -413,17 +414,26 @@ void _impl_mult(stack *globstack, stack *valstack, expr *nexpr) {
                     // don't cancel it out
     implicit_mul->children[0] = last;
     implicit_mul->children[1] = nexpr;
+    if (last->depth > nexpr->depth) {
+      implicit_mul->depth += last->depth;
+    } else {
+      implicit_mul->depth += nexpr->depth;
+    }
+    if (implicit_mul->depth > max_depth && max_depth > -1) {
+      return -1;
+    }
     valstack->top->contents = implicit_mul; // no need to pop if we're just
                                             // going to push back again
   } else {
     nexpr->sign *= get_sign(globstack);
     stack_push(valstack, nexpr, 0);
   }
+  return 0;
 }
-int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
+int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack,
+                   int max_depth) {
   if (!toklist)
     return -1;
-  ll_iter(toklist, (IT_ITER_FUNC)print_token);
   stack *opstack = stack_new(NULL);
   stack *valstack = stack_new((IT_FREE_FUNC)expr_free);
   ll_item *it = toklist->root; // this eventually gets consumed
@@ -440,7 +450,10 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       break;
     case VARIABLE:
       nexpr = expr_new(0, 0, VAR, 1, tok->spelling[0]);
-      _impl_mult(globstack, valstack, nexpr);
+
+      if (_impl_mult(globstack, valstack, nexpr, max_depth) == -1) {
+        goto depth_error;
+      }
       break;
     case PAREN_R:
       toklist->root = it;
@@ -451,7 +464,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       stack_item *old_top = globstack->top;
       toklist->root = it->next; // start evaluating from the next token
 
-      int ok = expr_parseinto(toklist, nexpr, globstack);
+      int ok = expr_parseinto(toklist, nexpr, globstack, max_depth);
       stack_item *new_top = globstack->top;
       globstack->top = old_top;
 
@@ -460,7 +473,9 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
         free(nexpr);
         goto error;
       }
-      _impl_mult(globstack, valstack, nexpr);
+      if (_impl_mult(globstack, valstack, nexpr, max_depth) == -1) {
+        goto depth_error;
+      }
       globstack->top = new_top;
       break;
     default:; // -pedantic go brrr
@@ -488,6 +503,14 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
         if (valstack->size >= 2) {
           op->children[1] = stack_pop(valstack, 0);
           op->children[0] = stack_pop(valstack, 0);
+          if (op->children[1]->depth > op->children[0]->depth) {
+            op->depth = 1 + op->children[1]->depth;
+          } else {
+            op->depth = 1 + op->children[0]->depth;
+          }
+          if (op->depth > max_depth && max_depth > -1) {
+            goto depth_error;
+          }
           stack_push(valstack, op, 0);
         } else { // unary minus already gets handled by get_sign, so just
                  // discard the op if there's not enough args
@@ -522,12 +545,12 @@ end:
       expr_free(op, 1);
     }
   }
-  printf("GLOBAL STACK CONTENTS:\n");
-  stack_iter(globstack, (IT_ITER_FUNC)print_token);
-  printf("OPERATION STACK CONTENTS:\n");
-  stack_iter(opstack, (IT_ITER_FUNC)print_expr);
-  printf("VALUE STACK CONTENTS:\n");
-  stack_iter(valstack, (IT_ITER_FUNC)print_expr);
+  // printf("GLOBAL STACK CONTENTS:\n");
+  // stack_iter(globstack, (IT_ITER_FUNC)print_token);
+  // printf("OPERATION STACK CONTENTS:\n");
+  // stack_iter(opstack, (IT_ITER_FUNC)print_expr);
+  // printf("VALUE STACK CONTENTS:\n");
+  // stack_iter(valstack, (IT_ITER_FUNC)print_expr);
 
   if (valstack->size > 1) {
     PyErr_SetString(PyExc_ValueError, "excess items in expression");
@@ -543,6 +566,8 @@ end:
   stack_free(valstack);
   stack_free(opstack);
   return 0;
+depth_error:
+  PyErr_SetString(PyExc_MemoryError, "maximum expression depth exceeded");
 error:
   stack_free_all(valstack);
   stack_free(opstack);
@@ -578,7 +603,11 @@ static PyObject *Expression_new(PyTypeObject *type, PyObject *args,
 
 static int Expression_init(Expression *self, PyObject *args, PyObject *kwds) {
   char *str;
-  if (!PyArg_ParseTuple(args, "s", &str)) {
+  static char *kwlist[] = {"string", "max_depth", NULL};
+  int max_depth = 8192;
+
+  if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|i", kwlist, &str,
+                                   &max_depth)) {
     return -1;
   }
   linked_list *toklist = expr_tokenize(str);
@@ -586,7 +615,7 @@ static int Expression_init(Expression *self, PyObject *args, PyObject *kwds) {
     return -1;
   }
   stack *globstack = stack_new(NULL);
-  if (expr_parseinto(toklist, &self->expression, globstack) == -1) {
+  if (expr_parseinto(toklist, &self->expression, globstack, max_depth) == -1) {
     return -1;
   }
   stack_free(globstack);

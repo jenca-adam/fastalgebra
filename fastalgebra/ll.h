@@ -1,12 +1,12 @@
 #ifndef _FA_LL_H
 #define _FA_LL_H
-#include"stack.h"
+#include "stack.h"
 typedef stack_item ll_item;
-typedef struct linked_list{
-	int size;
-	IT_FREE_FUNC it_free;
-	ll_item *top;
-	ll_item *root;
+typedef struct linked_list {
+  int size;
+  IT_FREE_FUNC it_free;
+  ll_item *top;
+  ll_item *root;
 } linked_list;
 
 linked_list *ll_new(IT_FREE_FUNC it_free);
