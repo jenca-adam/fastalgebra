@@ -6,13 +6,13 @@
 #include <stdio.h>
 /* these should really be in a header file but who cares */
 typedef enum {
-  CONST = 0,     // constants
-  ADD = 1,       // addition operation
-  MUL = 2,       // multiplication
-  DIV = 3,       // division
-  POW = 4,       // powet
-  VAR_COEFF = 5, // variable with a coefficient
-  NONE = -1,     // uninitialised/invalid
+  CONST = 0, // constants
+  ADD = 1,   // addition operation
+  MUL = 2,   // multiplication
+  DIV = 3,   // division
+  POW = 4,   // powet
+  VAR = 5,   // variable with a coefficient
+  NONE = -1, // uninitialised/invalid
 
 } expr_type;
 
@@ -33,6 +33,7 @@ typedef struct parser_token {
   token_type type;
   char *spelling;
   double value;
+  int index;
 } parser_token;
 
 typedef struct expr {
@@ -49,6 +50,7 @@ typedef struct Expression {
   PyObject_HEAD expr expression;
 } Expression;
 
+PyObject *expr_stringify(expr *xp, int add_sign);
 int expr_type_priority(expr_type et) {
   if (et == ADD) {
     return 1;
@@ -59,7 +61,7 @@ int expr_type_priority(expr_type et) {
   if (et == POW) {
     return 3;
   }
-  return -1;
+  return INT_MAX;
 }
 expr_type op_type(token_type op) {
   if (op == OP_ADD || op == OP_SUB) {
@@ -75,6 +77,12 @@ expr_type op_type(token_type op) {
     return POW;
   }
   return NONE;
+}
+int is_unary(expr_type et) {
+  if (et == ADD) {
+    return 1;
+  }
+  return 0;
 }
 signed char get_sign(stack *globstack) {
   if (!globstack->top) {
@@ -127,6 +135,7 @@ void print_token(parser_token *token) {
   printf("Type: %d\n", token->type);
   printf("Spelling: %s\n", token->spelling ? token->spelling : "NULL");
   printf("Value: %lf\n", token->value);
+  printf("Index: %d\n", token->index);
 }
 
 void _print_expr(expr *expr, int indent) {
@@ -157,7 +166,95 @@ void _print_expr(expr *expr, int indent) {
   }
   printf("%*s---------------\n", indent, "");
 }
+
 void print_expr(expr *expr) { _print_expr(expr, 0); }
+
+PyObject *expr_stringify_child(expr *chld, int priority, int can_associate) {
+  PyObject *chstr = expr_stringify(chld, 0);
+  if (expr_type_priority(chld->type) < priority ||
+      (chld->num_children > 1 && !can_associate)) {
+    PyObject *nchstr = PyUnicode_FromFormat("(%s)", PyUnicode_AsUTF8(chstr));
+    Py_DECREF(chstr);
+    chstr = nchstr;
+  }
+  return chstr;
+}
+PyObject *expr_stringify_op(expr *xp, char **fstrings) {
+  if (xp->num_children > 0) {
+    PyObject *nstr =
+        expr_stringify_child(xp->children[0], expr_type_priority(xp->type), 1);
+    for (int i = 1; i < xp->num_children; i++) {
+      PyObject *nchstr = expr_stringify_child(xp->children[i],
+                                              expr_type_priority(xp->type), 0);
+      PyObject *nnstr;
+      if (xp->children[i]->sign == -1) {
+        nnstr = PyUnicode_FromFormat(fstrings[1], PyUnicode_AsUTF8(nstr),
+                                     PyUnicode_AsUTF8(nchstr));
+      } else {
+        nnstr = PyUnicode_FromFormat(fstrings[0], PyUnicode_AsUTF8(nstr),
+                                     PyUnicode_AsUTF8(nchstr));
+      }
+      Py_XDECREF(nstr);
+      Py_XDECREF(nchstr);
+      nstr = nnstr;
+    }
+    return nstr;
+  } else {
+    return PyUnicode_New(0, 255);
+  }
+}
+PyObject *expr_stringify(expr *xp, int add_sign) {
+  PyObject *partial_string;
+  char *fstrings[2];
+  switch (xp->type) {
+  case VAR:
+    partial_string = PyUnicode_FromStringAndSize(&xp->varname, 1);
+    break;
+  case CONST:
+    if (xp->num_arguments > 0) {
+      char buffer[512]; // should be enough even for the largest doubles
+      sprintf(buffer, "%lf", xp->arguments[0]);
+      partial_string = PyUnicode_FromString(buffer);
+    } else {
+      partial_string = PyUnicode_New(0, 255);
+    }
+    break;
+  case ADD:
+    fstrings[0] = "%s+%s";
+    fstrings[1] = "%s-%s";
+    partial_string = expr_stringify_op(xp, fstrings);
+    break;
+  case MUL:
+    fstrings[0] = "%s*%s";
+    fstrings[1] = "%s*(-%s)";
+
+    partial_string = expr_stringify_op(xp, fstrings);
+    break;
+  case DIV:
+    fstrings[0] = "%s/%s";
+    fstrings[1] = "%s/(-%s)";
+
+    partial_string = expr_stringify_op(xp, fstrings);
+    break;
+  case POW:
+    fstrings[0] = "%s^%s";
+    fstrings[1] = "%s^(-%s)";
+
+    partial_string = expr_stringify_op(xp, fstrings);
+    break;
+  default:
+    partial_string = PyUnicode_New(0, 255);
+  }
+  if (add_sign) {
+    if (xp->sign == -1) {
+      PyObject *final =
+          PyUnicode_FromFormat("-%s", PyUnicode_AsUTF8(partial_string));
+      // Py_XDECREF(partial_string);
+      return final;
+    }
+  }
+  return partial_string;
+}
 linked_list *expr_tokenize(char *str) {
   int bytes_read;
   stack *paren_stack = stack_new(NULL);
@@ -178,6 +275,7 @@ linked_list *expr_tokenize(char *str) {
         ntok->type = NUMBER;
         ntok->spelling = malloc(sizeof(char) * bytes_read + 1); // null
         ntok->value = value;
+        ntok->index = str - origin;
         memcpy(ntok->spelling, str, bytes_read); // this is ok
         ntok->spelling[bytes_read] = '\0';       // as long as we do this
         ll_push(tokens, ntok, 1);
@@ -220,7 +318,7 @@ linked_list *expr_tokenize(char *str) {
         str++;
         break;
       case '/':
-        toktype = OP_MUL;
+        toktype = OP_DIV;
         spelling = strdup("/");
         str++;
         break;
@@ -252,6 +350,7 @@ linked_list *expr_tokenize(char *str) {
         ntok->type = toktype;
         ntok->spelling = spelling;
         ntok->value = 0;
+        ntok->index = str - origin;
         ll_push(tokens, ntok, 1);
       }
     }
@@ -327,7 +426,6 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
   ll_iter(toklist, (IT_ITER_FUNC)print_token);
   stack *opstack = stack_new(NULL);
   stack *valstack = stack_new((IT_FREE_FUNC)expr_free);
-  expr *last = NULL;
   ll_item *it = toklist->root; // this eventually gets consumed
   while (it) {
     expr *nexpr;
@@ -341,7 +439,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       stack_push(valstack, nexpr, 0);
       break;
     case VARIABLE:
-      nexpr = expr_new(0, 0, VAR_COEFF, 1, tok->spelling[0]);
+      nexpr = expr_new(0, 0, VAR, 1, tok->spelling[0]);
       _impl_mult(globstack, valstack, nexpr);
       break;
     case PAREN_R:
@@ -370,6 +468,16 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
       if (type == NONE) {
         break;
       }
+      if (globstack->top->prev &&
+          op_type(((parser_token *)globstack->top->prev->contents)->type) !=
+              NONE &&
+          !is_unary(type)) {
+        PyErr_Format(PyExc_ValueError,
+                     "two non-unary operations follow each other in expression "
+                     "at index %d",
+                     tok->index);
+        goto error;
+      }
       int new_priority = expr_type_priority(type);
       // while the next operation has lower priority than the previous
       while (opstack->top &&
@@ -386,6 +494,13 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack) {
           expr_free(
               op,
               1); // don't exit the loop here, we want to free unused unary ops
+          if (!is_unary(type)) {
+            PyErr_Format(
+                PyExc_ValueError,
+                "not enough arguments for stray '%s' in expression at index %d",
+                tok->spelling, tok->index);
+            goto error;
+          }
         }
       }
       nexpr = expr_new(2, 0, type, 1, '\0');
@@ -435,6 +550,9 @@ error:
   return -1;
 }
 
+static PyObject *Expression_stringify(PyObject *self, PyObject *noargs) {
+  return expr_stringify(&((Expression *)self)->expression, 1);
+}
 static void Expression_dealloc(Expression *self) {
   if (self) {
     expr_free(&self->expression, 0);
@@ -489,7 +607,10 @@ static struct PyMemberDef Expression_members[] = {
     {"varname", Py_T_CHAR,
      offsetof(Expression, expression) + offsetof(expr, varname)},
     {NULL}};
-static struct PyMethodDef Expression_methods[] = {{NULL, NULL, 0, NULL}};
+static struct PyMethodDef Expression_methods[] = {
+    {"stringify", Expression_stringify, METH_NOARGS,
+     "converts the expression to a string"},
+    {NULL, NULL, 0, NULL}};
 static PyTypeObject ExpressionType = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "fastalgebra.expr.Expression",
     .tp_doc = "A basic Expression class",

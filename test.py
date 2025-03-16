@@ -1,2 +1,2 @@
 import fastalgebra
-b = fastalgebra.Expression("("*7+"-8)"*7)
+b = fastalgebra.Expression("("*70+"-8)"*70)

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["fastalgebra"]
 
-ext-modules = [{name = "fastalgebra.expr",sources = ["fastalgebra/expr.c", "fastalgebra/ll.c", "fastalgebra/stack.c"], extra-compile-args = ["-Wall","-pedantic"]}]
+ext-modules = [{name = "fastalgebra.expr",sources = ["fastalgebra/expr.c", "fastalgebra/ll.c", "fastalgebra/stack.c"], extra-compile-args = ["-Wall","-pedantic", "-O0"]}]
 
 [project]
 name = "fastalgebra"
