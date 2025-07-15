@@ -1,6 +1,7 @@
 #define PY_SSIZE_T_CLEAN
 #include "ll.h"
 #include "stack.h"
+#include <math.h>
 #include <Python.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -248,13 +249,12 @@ PyObject *expr_stringify(expr *xp, int add_sign) {
   }
   if (add_sign) {
     if (xp->sign == -1) {
-	char *fmt;
-	if(xp->type == ADD){
-		fmt = "-(%s)";
-	}
-	else {
-		fmt = "-(%s)";
-	}
+      char *fmt;
+      if (xp->type == ADD) {
+        fmt = "-(%s)";
+      } else {
+        fmt = "-(%s)";
+      }
       PyObject *final =
           PyUnicode_FromFormat(fmt, PyUnicode_AsUTF8(partial_string));
       // Py_XDECREF(partial_string);
@@ -264,81 +264,103 @@ PyObject *expr_stringify(expr *xp, int add_sign) {
   return partial_string;
 }
 
-double expr_evaluate(expr *expr, PyObject *d){
-    double accum;
-    switch(expr->type){
-        case VAR:
-            PyObject *u = PyUnicode_FromStringAndSize(&expr->varname,1);
-            PyObject *val = PyDict_GetItemWithError(d, u);
-            Py_DECREF(u);
-            if(!val){
-                if(!PyErr_Occurred()){
-                PyErr_Format(PyExc_LookupError, "variable %c not present in context", expr->varname);
-                }
-                return -1;
-            }
-            if(!PyNumber_Check(val)){
-                PyErr_Format(PyExc_TypeError, "non-numeric variable %c in context", expr->varname);
-                return -1;
-            }
-            PyObject *f = PyNumber_Float(val);
-            if(!f){
-                if(!PyErr_Occurred()){
-                    PyErr_Format(PyExc_TypeError, "unknown error while converting variable %c to float", expr->varname);
-                }
-                return -1;
-            }
-            double v = PyFloat_AsDouble(f);
-            Py_DECREF(f);
-            return expr->sign*v;
-        case CONST:
-            if(expr->num_arguments>0){
-                return expr->sign*expr->arguments[0];
-            }
-            return 0;
-        case ADD:
-            accum = 0;
-            for(int i=0; i<expr->num_children; i++){
-                double result = expr_evaluate(expr->children[i], d);
-                if(PyErr_Occurred()){
-                    return -1;
-                }
-                accum+=result;
-            }
-            return expr->sign*accum;
-        case MUL:
-            accum = 1;
-            for(int i=0; i<expr->num_children; i++){
-                double result = expr_evaluate(expr->children[i], d);
-                if(PyErr_Occurred()){
-                    return -1;
-                }
-                accum*=result;
-            }
-            return expr->sign*accum;
-        case DIV:
-            accum=0;
-            if(expr->num_children<1){
-                PyErr_SetString(PyExc_ValueError,"No children while dividing");
-                return -1;
-            }
-            for(int i=0; i<expr->num_children; i++){
-                double result = expr_evaluate(expr->children[i], d);
-                if(PyErr_Occurred()){
-                    return -1;
-                }
-                if(i==0){
-                    accum=result;
-                }
-                else{
-                    accum/=result;
-                }
-            }
-            return expr->sign*accum;
-        default:
-            PyErr_SetString(PyExc_NotImplementedError, "not implemented");
-            return -1;      
-    } 
+double expr_evaluate(expr *expr, PyObject *d) {
+  double accum;
+  switch (expr->type) {
+  case VAR:
+    PyObject *u = PyUnicode_FromStringAndSize(&expr->varname, 1);
+    PyObject *val = PyDict_GetItemWithError(d, u);
+    Py_DECREF(u);
+    if (!val) {
+      if (!PyErr_Occurred()) {
+        PyErr_Format(PyExc_LookupError, "variable %c not present in context",
+                     expr->varname);
+      }
+      return -1;
+    }
+    if (!PyNumber_Check(val)) {
+      PyErr_Format(PyExc_TypeError, "non-numeric variable %c in context",
+                   expr->varname);
+      return -1;
+    }
+    PyObject *f = PyNumber_Float(val);
+    if (!f) {
+      if (!PyErr_Occurred()) {
+        PyErr_Format(PyExc_TypeError,
+                     "unknown error while converting variable %c to float",
+                     expr->varname);
+      }
+      return -1;
+    }
+    double v = PyFloat_AsDouble(f);
+    Py_DECREF(f);
+    return expr->sign * v;
+  case CONST:
+    if (expr->num_arguments > 0) {
+      return expr->sign * expr->arguments[0];
+    }
+    return 0;
+  case ADD:
+    accum = 0;
+    for (int i = 0; i < expr->num_children; i++) {
+      double result = expr_evaluate(expr->children[i], d);
+      if (PyErr_Occurred()) {
+        return -1;
+      }
+      accum += result;
+    }
+    return expr->sign * accum;
+  case MUL:
+    accum = 1;
+    for (int i = 0; i < expr->num_children; i++) {
+      double result = expr_evaluate(expr->children[i], d);
+      if (PyErr_Occurred()) {
+        return -1;
+      }
+      accum *= result;
+    }
+    return expr->sign * accum;
+  case DIV:
+    accum = 0;
+    if (expr->num_children < 1) {
+      PyErr_SetString(PyExc_ValueError, "Not enough children for / operation");
+      return -1;
+    }
+    for (int i = 0; i < expr->num_children; i++) {
+      double result = expr_evaluate(expr->children[i], d);
+      if (PyErr_Occurred()) {
+        return -1;
+      }
+      if (i == 0) {
+        accum = result;
+      } else {
+        accum /= result;
+      }
+    }
+    return expr->sign * accum;
+  case POW:
+    accum = 0;
+    if (expr->num_children <1){
+        PyErr_SetString(PyExc_ValueError, "Not enough children for ^ operation");
+      return -1;
+    }
+    for (int i=0; i<expr->num_children; i++){
+        double result = expr_evaluate(expr->children[i], d);
+        if (PyErr_Occurred()){
+            return -1;
+        }
+        if(i==0){
+            accum=result;
+        }
+        else{
+            accum = pow(accum, result);
+        }
+    }
+    return expr->sign*accum;
+  default:
+    PyErr_SetString(PyExc_NotImplementedError, "not implemented");
+    return -1;
+  }
 }
 linked_list *expr_tokenize(char *str) {
   int bytes_read;
@@ -569,13 +591,17 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack,
       }
       if (globstack->top->prev &&
           op_type(((parser_token *)globstack->top->prev->contents)->type) !=
-              NONE &&
-          !is_unary(type)) {
-        PyErr_Format(PyExc_ValueError,
-                     "two non-unary operations follow each other in expression "
-                     "at index %d",
-                     tok->index);
-        goto error;
+              NONE) {
+
+        if (!is_unary(type)) {
+          PyErr_Format(
+              PyExc_ValueError,
+              "two non-unary operations follow each other in expression "
+              "at index %d",
+              tok->index);
+          goto error;
+        }
+        goto skip; // bugfix
       }
       int new_priority = expr_type_priority(type);
       // while the next operation has lower priority than the previous
@@ -614,6 +640,7 @@ int expr_parseinto(linked_list *toklist, expr *expression, stack *globstack,
       stack_push(opstack, nexpr, 0);
       break;
     }
+skip:
     if (it) {
       it = it->next;
     }
@@ -658,5 +685,3 @@ error:
 
   return -1;
 }
-
-
